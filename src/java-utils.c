@@ -362,6 +362,9 @@ consume_comment (int      fdesc,
 }
 
 
+#define MAX_PACKAGE_NAME_LEN 500
+
+
 /* This function extracts package name from a java file */
 char*
 get_package_name_from_java_file (char *fname)
@@ -420,10 +423,12 @@ get_package_name_from_java_file (char *fname)
 
 		first_valid_word[7] = 0;
 		if (g_ascii_strcasecmp (first_valid_word, "package") == 0) {
-			char buffer[500];
+			char buffer[MAX_PACKAGE_NAME_LEN];
 			int  index = 0;
 
-			while (read (cfile->fd, &ch, 1) == 1) {
+			while ((index < MAX_PACKAGE_NAME_LEN)
+				&& (read (cfile->fd, &ch, 1) == 1))
+			{
 				if (ch == ';')
 					break;
 				if (ch == '.')
@@ -431,8 +436,10 @@ get_package_name_from_java_file (char *fname)
 				else
 					buffer[index++] = ch;
 			}
-			buffer[index] = 0;
-			package = g_strdup (buffer);
+			if (index < MAX_PACKAGE_NAME_LEN) {
+				buffer[index] = 0;
+				package = g_strdup (buffer);
+			}
 		}
 	}
 
