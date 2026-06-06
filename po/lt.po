@@ -10,9 +10,9 @@ msgid ""
 msgstr ""
 "Project-Id-Version: file-roller.HEAD\n"
 "Report-Msgid-Bugs-To: https://gitlab.gnome.org/GNOME/file-roller/issues/\n"
-"POT-Creation-Date: 2025-02-10 22:16+0000\n"
-"PO-Revision-Date: 2025-02-21 22:50+0200\n"
-"Last-Translator: Aurimas Černius <aurisc4@gmail.com>\n"
+"POT-Creation-Date: 2026-05-07 05:51+0000\n"
+"PO-Revision-Date: 2026-06-06 22:03+0300\n"
+"Last-Translator: Aurimas Černius <aurimas.cernius@mailo.com>\n"
 "Language-Team: Lietuvių <gnome-lt@lists.akl.lt>\n"
 "Language: lt\n"
 "MIME-Version: 1.0\n"
@@ -20,58 +20,25 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "(n%100<10 || n%100>=20) ? 1 : 2);\n"
-"X-Generator: Poedit 3.5\n"
+"X-Generator: Poedit 3.9\n"
 "X-Poedit-Bookmarks: -1,-1,-1,-1,17,-1,-1,-1,-1,-1\n"
 
-#: data/org.gnome.FileRoller.appdata.xml.in:9
-#: data/org.gnome.FileRoller.desktop.in.in:3 src/fr-application-menu.c:131
+#: data/org.gnome.FileRoller.desktop.in.in:2
+#: data/org.gnome.FileRoller.metainfo.xml.in:9 src/fr-application-menu.c:131
 #: src/fr-application.c:472 src/fr-window.c:1869 src/fr-window.c:4627
 msgid "File Roller"
 msgstr "Failų presas"
 
-#: data/org.gnome.FileRoller.appdata.xml.in:10
-msgid "Open, modify and create compressed archive files"
-msgstr "Atverti, keisti ar sukurti suspaustus archyvų failus"
-
-#: data/org.gnome.FileRoller.appdata.xml.in:12
-msgid ""
-"File Roller is a GNOME application for opening, creating, and modifying "
-"archive and compressed archive files."
-msgstr ""
-"Failų presas yra GNOME programa archyvų ir suspaustų archyvų failų "
-"atidarymui, sukūrimui bei keitimui."
-
-#: data/org.gnome.FileRoller.appdata.xml.in:16
-msgid ""
-"File Roller supports a wide range of different archive files, including:"
-msgstr "Failų presas palaiko daug skirtingų archyvų failų, pvz.:"
-
-#: data/org.gnome.FileRoller.appdata.xml.in:20
-msgid "gzip archives (.tar.gz, .tgz)"
-msgstr "gzip archyvai (.tar.gz, .tgz)"
-
-#: data/org.gnome.FileRoller.appdata.xml.in:21
-msgid "bzip archives (.tar.bz, .tbz)"
-msgstr "bzip archyvai (.tar.bz, .tbz)"
-
-#: data/org.gnome.FileRoller.appdata.xml.in:22
-msgid "zip archives (.zip)"
-msgstr "zip archyvai (.zip)"
-
-#: data/org.gnome.FileRoller.appdata.xml.in:23
-msgid "xz archives (.tar.xz)"
-msgstr "xz archyvai (.tar.xz)"
-
-#: data/org.gnome.FileRoller.desktop.in.in:4
+#: data/org.gnome.FileRoller.desktop.in.in:3
 msgid "Archive Manager"
 msgstr "Archyvų tvarkymo programa"
 
-#: data/org.gnome.FileRoller.desktop.in.in:5
+#: data/org.gnome.FileRoller.desktop.in.in:4
 msgid "Create and modify an archive"
 msgstr "Kurti ir modifikuoti archyvą"
 
 #. Translators: Search terms to find this application. Do NOT translate or localize the semicolons! The list MUST also end with a semicolon!
-#: data/org.gnome.FileRoller.desktop.in.in:7
+#: data/org.gnome.FileRoller.desktop.in.in:6
 msgid "zip;tar;extract;unpack;"
 msgstr "zip;tar;išskleisti;išpakuoti;"
 
@@ -222,6 +189,43 @@ msgstr "Numatytasis tomo dydis"
 msgid "The default size for volumes."
 msgstr "Numatytas tomų dydis."
 
+#: data/org.gnome.FileRoller.metainfo.xml.in:10
+msgid "Open, modify and create compressed archive files"
+msgstr "Atverti, keisti ar sukurti suspaustus archyvų failus"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:12
+msgid ""
+"File Roller is a GNOME application for opening, creating, and modifying "
+"archive and compressed archive files."
+msgstr ""
+"Failų presas yra GNOME programa archyvų ir suspaustų archyvų failų "
+"atidarymui, sukūrimui bei keitimui."
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:16
+msgid ""
+"File Roller supports a wide range of different archive files, including:"
+msgstr "Failų presas palaiko daug skirtingų archyvų failų, pvz.:"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:20
+msgid "gzip archives (.tar.gz, .tgz)"
+msgstr "gzip archyvai (.tar.gz, .tgz)"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:21
+msgid "bzip archives (.tar.bz, .tbz)"
+msgstr "bzip archyvai (.tar.bz, .tbz)"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:22
+msgid "zip archives (.zip)"
+msgstr "zip archyvai (.zip)"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:23
+msgid "xz archives (.tar.xz)"
+msgstr "xz archyvai (.tar.xz)"
+
+#: data/org.gnome.FileRoller.metainfo.xml.in:36
+msgid "File Roller's main interface"
+msgstr "Failų preso pagrindinė sąsaja"
+
 #: nautilus/nautilus-fileroller.c:258
 msgid "Extract Here"
 msgstr "Išskleisti čia"
@@ -290,7 +294,7 @@ msgstr "„%s“ reikalauja slaptažodžio"
 msgid "Wrong password."
 msgstr "Neteisingas slaptažodis."
 
-#: src/dlg-batch-add.c:98 src/fr-application.c:248 src/fr-application.c:286
+#: src/dlg-batch-add.c:110 src/fr-application.c:248 src/fr-application.c:286
 #: src/fr-application.c:582
 msgid "Compress"
 msgstr "Suglaudinti"
@@ -443,7 +447,7 @@ msgstr "GNOME archyvų tvarkyklė."
 msgid "translator-credits"
 msgstr ""
 "Žygimantas Beručka <uid0@akl.lt>\n"
-"Aurimas Černius <aurisc4@gmail.com>"
+"Aurimas Černius <aurimas.cernius@mailo.com>"
 
 #: src/fr-application.c:58
 msgid "Add files to the specified archive and quit the program"
@@ -507,29 +511,29 @@ msgstr "Neturite reikiamų teisių."
 msgid "This archive type cannot be modified"
 msgstr "Šio tipo archyvai negali būti keičiami"
 
-#: src/fr-archive.c:1898 src/fr-new-archive-dialog.c:881
+#: src/fr-archive.c:1898 src/fr-new-archive-dialog.c:886
 msgid "You can’t add an archive to itself."
 msgstr "Negalima įdėti archyvo į jį patį."
 
 #. Translators: %s is a filename.
-#: src/fr-command-7z.c:296 src/fr-command-rar.c:532 src/fr-command-tar.c:328
+#: src/fr-command-7z.c:296 src/fr-command-rar.c:539 src/fr-command-tar.c:328
 #, c-format
 msgid "Adding “%s”"
 msgstr "Pridedamas „%s“"
 
 #. Translators: %s is a filename.
-#: src/fr-command-7z.c:449 src/fr-command-rar.c:664 src/fr-command-tar.c:449
+#: src/fr-command-7z.c:450 src/fr-command-rar.c:671 src/fr-command-tar.c:449
 #, c-format
 msgid "Extracting “%s”"
 msgstr "Išskleidžiamas „%s“"
 
 #. Translators: %s is a filename.
-#: src/fr-command-rar.c:613 src/fr-command-tar.c:394
+#: src/fr-command-rar.c:620 src/fr-command-tar.c:394
 #, c-format
 msgid "Removing “%s”"
 msgstr "Šalinamas „%s“"
 
-#: src/fr-command-rar.c:806
+#: src/fr-command-rar.c:813
 #, c-format
 msgid "Could not find the volume: %s"
 msgstr "Nepavyko rasti dalies: %s"
@@ -598,37 +602,37 @@ msgstr "Naujas archyvas"
 msgid "Could not delete the old archive."
 msgstr "Nepavyko ištrinti seno archyvo."
 
-#: src/fr-new-archive-dialog.c:781 src/fr-new-archive-dialog.c:797
-#: src/fr-new-archive-dialog.c:837 src/fr-new-archive-dialog.c:856
-#: src/fr-new-archive-dialog.c:879 src/fr-window.c:2748
+#: src/fr-new-archive-dialog.c:786 src/fr-new-archive-dialog.c:802
+#: src/fr-new-archive-dialog.c:842 src/fr-new-archive-dialog.c:861
+#: src/fr-new-archive-dialog.c:884 src/fr-window.c:2748
 msgid "Could not create the archive"
 msgstr "Nepavyko sukurti archyvo"
 
-#: src/fr-new-archive-dialog.c:783
+#: src/fr-new-archive-dialog.c:788
 msgid "You have to specify an archive name."
 msgstr "Turite nurodyti archyvo pavadinimą."
 
-#: src/fr-new-archive-dialog.c:839
+#: src/fr-new-archive-dialog.c:844
 msgid "You don’t have permission to create an archive in this folder"
 msgstr "Neturite leidimo sukurti archyvą šiame aplanke"
 
 #. Translators: the name references to a filename.  This message can appear when renaming a file.
-#: src/fr-new-archive-dialog.c:858 src/glib-utils.c:1182
+#: src/fr-new-archive-dialog.c:863 src/glib-utils.c:1182
 msgid "New name is the same as old one, please type other name."
 msgstr "Naujas vardas yra toks pat kaip ir senas, įveskite kitą vardą."
 
-#: src/fr-new-archive-dialog.c:907
+#: src/fr-new-archive-dialog.c:912
 #, c-format
 msgid "A file named “%s” already exists.  Do you want to replace it?"
 msgstr "Failas pavadinimu „%s“ jau yra. Ar norite jį perrašyti?"
 
-#: src/fr-new-archive-dialog.c:908
+#: src/fr-new-archive-dialog.c:913
 #, c-format
 msgid ""
 "The file already exists in “%s”.  Replacing it will overwrite its contents."
 msgstr "Failas jau yra aplanke „%s“.  Jo pakeitimas perrašys turinį."
 
-#: src/fr-new-archive-dialog.c:915 src/fr-window.c:5841
+#: src/fr-new-archive-dialog.c:920 src/fr-window.c:5841
 msgid "_Replace"
 msgstr "Pa_keisti"
 
@@ -1002,7 +1006,7 @@ msgstr "Pe_rvardinti"
 
 #: src/fr-window.c:7998
 msgid "Source and destination are the same."
-msgstr "Šaltinis ir paskirtis sutampa"
+msgstr "Šaltinis ir paskirtis sutampa."
 
 #. Translators: %s are archive filenames
 #: src/fr-window.c:8047
