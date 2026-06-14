@@ -260,10 +260,13 @@ parse_progress_line (FrArchive  *archive,
 			fr_archive_progress (archive, fr_archive_progress_inc_completed_files (archive, 1));
 		}
 		else {
-			char  filename[4196];
+			const int MAX_FILENAME_LEN = 4096;
+			char  filename[MAX_FILENAME_LEN];
 			char *msg;
 
-			strcpy (filename, line + prefix_len);
+			if (g_strlcpy (filename, line + prefix_len, MAX_FILENAME_LEN) >= (gsize) MAX_FILENAME_LEN) {
+				return;
+			}
 			msg = g_strdup_printf (message_format, filename, NULL);
 			fr_archive_message (archive, msg);
 

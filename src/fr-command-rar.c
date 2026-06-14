@@ -476,12 +476,15 @@ parse_progress_line (FrCommand  *comm,
 			fr_archive_progress (archive, fr_archive_progress_inc_completed_files (archive, 1));
 		}
 		else {
-			char  filename[4096];
+			const int MAX_FILENAME_LEN = 4096;
+			char  filename[MAX_FILENAME_LEN];
 			char *b_idx;
 			int   len;
 			char *msg;
 
-			strcpy (filename, line + prefix_len);
+			if (g_strlcpy (filename, line + prefix_len, MAX_FILENAME_LEN) >= (gsize) MAX_FILENAME_LEN) {
+				return;
+			}
 
 			/* when a new volume is created a sequence of backspaces is
 			 * issued, remove the backspaces from the filename */
