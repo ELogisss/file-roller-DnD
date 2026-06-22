@@ -1,3 +1,43 @@
+Version 44.7
+~~~~~~~~~~~~
+Released: 2026-06-22
+
+Bugfixes:
+ * New Archive Dialog: allow input of an absolute path directly (Lukáš
+ * Check line length when parsing command output (!327)
+ * Java Utils: make sure the package name respects the max size (!325)
+   Tyrychtr) (!311)
+ * Metainfo: Add screenshot caption (Maximiliano Sandoval)
+ * Flatpak Improvements: remove zstd module; improve cleanup command; replace
+   p7zip with 7zip; reduce libportal features; modernize manifest. (Maximiliano
+   Sandoval, Sabri Ünal, Jan Tojnar)
+
+Translations:
+ * Belarusian (Yuras Shumovich)
+ * Brazilian Portuguese (Rafael Fontenelle)
+ * Bulgarian (twlvnn kraftwerk)
+ * Chinese (China) (lumingzh)
+ * Danish (Alan Mortensen)
+ * French - France (Guillaume Bernard)
+ * Hungarian (Balázs Úr)
+ * Kazakh (Baurzhan Muftakhidinov)
+ * Lietuvių (Aurimas Černius)
+ * Portuguese (Hugo Carvalho)
+ * Slovenian (Martin Srebotnjak)
+ * suomi (Jiri Grönroos)
+ * Swedish (Anders Jonsson)
+ * Tot En Òc ()
+ * Turkish (Emin Tufan Çetin)
+ * Ukrainian (Yuri Chornoivan)
+ * čeština (Daniel Rusek)
+ * Ελληνικά (Efstathios Iosifidis)
+ * Русский (Ser82-png)
+ * српски (Марко М. Костић)
+
+Help translations:
+ * Kazakh (Baurzhan Muftakhidinov)
+ * Serbian (Марко Костић)
+
 Version 44.6
 ~~~~~~~~~~~~
 Released: 2025-10-19

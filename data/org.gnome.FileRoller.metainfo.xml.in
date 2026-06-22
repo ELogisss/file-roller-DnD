@@ -37,6 +37,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="44.7" date="2026-06-22" type="stable">
+      <description>
+        <p>This release fixes the following bugs:</p>
+        <ul>
+          <li>New Archive Dialog: allow input of an absolute path directly.</li>
+          <li>Check line length when parsing command output.</li>
+          <li>Java Utils: make sure the package name respects the max size.</li>
+          <li>Metainfo: Add screenshot caption.</li>
+          <li>Flatpak improvements.</li>
+        </ul>
+        <p>This release updates translations.</p>
+      </description>
+    </release>
     <release version="44.6" date="2025-10-19" type="stable">
       <description>
         <p>This release fixes the following bugs:</p>
