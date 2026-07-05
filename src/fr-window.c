@@ -306,6 +306,11 @@ typedef struct {
 						  * dragging*/
 	gboolean	  dnd_extract_is_running;
 	gboolean	  dnd_extract_finished_with_error;
+	char		 *drag_tmp_dir;
+	char		 *drag_old_tmp_dir;
+	GBytes		 *drag_uris_bytes;
+	GFile		 *drag_single_file;
+	guint		  drag_prepare_idle_id;
 
 	/* progress dialog data */
 
@@ -512,6 +517,37 @@ fr_window_free_private_data (FrWindow *window)
 	_g_object_unref (private->saving_file);
 
 	fr_window_free_open_files (window);
+
+	if (private->drag_prepare_idle_id != 0) {
+		g_source_remove (private->drag_prepare_idle_id);
+		private->drag_prepare_idle_id = 0;
+	}
+
+	if (private->drag_uris_bytes != NULL) {
+		g_bytes_unref (private->drag_uris_bytes);
+		private->drag_uris_bytes = NULL;
+	}
+
+	if (private->drag_single_file != NULL) {
+		g_object_unref (private->drag_single_file);
+		private->drag_single_file = NULL;
+	}
+
+	if (private->drag_tmp_dir != NULL) {
+		GFile *dir = g_file_new_for_path (private->drag_tmp_dir);
+		_g_file_remove_directory (dir, NULL, NULL);
+		g_object_unref (dir);
+		g_free (private->drag_tmp_dir);
+		private->drag_tmp_dir = NULL;
+	}
+
+	if (private->drag_old_tmp_dir != NULL) {
+		GFile *dir = g_file_new_for_path (private->drag_old_tmp_dir);
+		_g_file_remove_directory (dir, NULL, NULL);
+		g_object_unref (dir);
+		g_free (private->drag_old_tmp_dir);
+		private->drag_old_tmp_dir = NULL;
+	}
 
 	g_clear_error (&private->drag_error);
 	_g_string_list_free (private->drag_file_list);
@@ -3558,6 +3594,228 @@ list_view_button_pressed_cb (GtkGestureClick *gesture,
 }
 
 
+/* -- drag and drop temp dir extraction -- */
+
+
+static void
+cancel_drag_extraction (FrWindow *window)
+{
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+
+	if (priv->drag_prepare_idle_id != 0) {
+		g_source_remove (priv->drag_prepare_idle_id);
+		priv->drag_prepare_idle_id = 0;
+	}
+
+	if (priv->drag_uris_bytes != NULL) {
+		g_bytes_unref (priv->drag_uris_bytes);
+		priv->drag_uris_bytes = NULL;
+	}
+
+	if (priv->drag_single_file != NULL) {
+		g_object_unref (priv->drag_single_file);
+		priv->drag_single_file = NULL;
+	}
+
+	/* Move current temp dir to old for deferred cleanup;
+	 * the running extraction thread may still be writing to it. */
+	if (priv->drag_tmp_dir) {
+		g_free (priv->drag_old_tmp_dir);
+		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
+		priv->drag_tmp_dir = NULL;
+	}
+}
+
+
+static void
+cleanup_old_tmp_dir (FrWindow *window)
+{
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+
+	if (priv->drag_old_tmp_dir) {
+		GFile *dir = g_file_new_for_path (priv->drag_old_tmp_dir);
+		_g_file_remove_directory (dir, NULL, NULL);
+		g_object_unref (dir);
+		g_free (priv->drag_old_tmp_dir);
+		priv->drag_old_tmp_dir = NULL;
+	}
+}
+
+
+static char *
+build_uri_list_from_dir (const char *dir_path)
+{
+	GFile *dir;
+	GFileEnumerator *enumerator;
+	GFileInfo *info;
+	GString *uris;
+
+	dir = g_file_new_for_path (dir_path);
+	enumerator = g_file_enumerate_children (dir,
+						G_FILE_ATTRIBUTE_STANDARD_NAME,
+						G_FILE_QUERY_INFO_NONE,
+						NULL, NULL);
+	if (! enumerator) {
+		g_object_unref (dir);
+		return NULL;
+	}
+
+	uris = g_string_new ("");
+	while ((info = g_file_enumerator_next_file (enumerator, NULL, NULL)) != NULL) {
+		GFile *child = g_file_get_child (dir, g_file_info_get_name (info));
+		char *uri = g_file_get_uri (child);
+		g_string_append (uris, uri);
+		g_string_append (uris, "\r\n");
+		g_free (uri);
+		g_object_unref (child);
+		g_object_unref (info);
+	}
+	g_object_unref (enumerator);
+	g_object_unref (dir);
+
+	return g_string_free (uris, FALSE);
+}
+
+
+static gboolean
+drag_extract_ready_poll (gpointer user_data)
+{
+	FrWindow *window = FR_WINDOW (user_data);
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+	char *uris_str;
+
+	if (priv->dnd_extract_is_running)
+		return G_SOURCE_CONTINUE;
+
+	priv->drag_prepare_idle_id = 0;
+
+	cleanup_old_tmp_dir (window);
+
+	if (priv->dnd_extract_finished_with_error)
+		return G_SOURCE_REMOVE;
+
+	uris_str = build_uri_list_from_dir (priv->drag_tmp_dir);
+	if (! uris_str || uris_str[0] == '\0') {
+		g_free (uris_str);
+		return G_SOURCE_REMOVE;
+	}
+
+	priv->drag_uris_bytes = g_bytes_new_take (uris_str, strlen (uris_str));
+
+	/* If only one item, store it for better drag icon */
+	{
+		char *nl = strstr (uris_str, "\r\n");
+		if (nl && nl == uris_str + strlen (uris_str) - 2) {
+			/* Single URI */
+			char *single_uri = g_strndup (uris_str, nl - uris_str);
+			if (single_uri && *single_uri) {
+				priv->drag_single_file = g_file_new_for_uri (single_uri);
+				g_free (single_uri);
+			}
+		}
+	}
+
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+selection_changed_extract_cb (FrWindow *window,
+			      GList    *selection)
+{
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+	GFile *tmp_dir_file;
+	char *tmp_dir_path;
+	gboolean junk_paths = FALSE;
+
+	if (! window->archive)
+		return;
+
+	cancel_drag_extraction (window);
+
+	if (! selection)
+		return;
+
+	/* Don't start extraction while the archive is busy
+	 * (listing, another extraction, etc.). */
+	if (priv->action != FR_ACTION_NONE)
+		return;
+
+	/* Strip directory structure for a single file inside a subfolder */
+	if (selection->next == NULL) {
+		const char *path = selection->data;
+		if (path && strchr (path, '/') != NULL && ! g_str_has_suffix (path, "/"))
+			junk_paths = TRUE;
+	}
+
+	tmp_dir_path = _g_path_get_temp_work_dir (NULL);
+	if (! tmp_dir_path)
+		return;
+	tmp_dir_file = g_file_new_for_path (tmp_dir_path);
+
+	priv->drag_tmp_dir = g_strdup (tmp_dir_path);
+
+	priv->dnd_extract_is_running = TRUE;
+	priv->dnd_extract_finished_with_error = FALSE;
+
+	fr_window_archive_extract (window,
+				   selection,
+				   tmp_dir_file,
+				   NULL,
+				   FALSE,
+				   FR_OVERWRITE_NO,
+				   junk_paths,
+				   FALSE);
+
+	g_object_unref (tmp_dir_file);
+	_g_string_list_free (selection);
+
+	priv->drag_prepare_idle_id = g_idle_add (drag_extract_ready_poll, window);
+}
+
+
+static GdkContentProvider *
+list_view_drag_prepare_cb (GtkDragSource *source,
+			   double         x,
+			   double         y,
+			   FrWindow      *window)
+{
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+
+	if (! window->archive)
+		return NULL;
+
+	if (priv->drag_uris_bytes == NULL)
+		return NULL;
+
+	if (priv->drag_single_file != NULL)
+		return gdk_content_provider_new_typed (G_TYPE_FILE, priv->drag_single_file, NULL);
+
+	return gdk_content_provider_new_for_bytes ("text/uri-list", priv->drag_uris_bytes);
+}
+
+
+static GdkContentProvider *
+folder_tree_drag_prepare_cb (GtkDragSource *source,
+			     double         x,
+			     double         y,
+			     FrWindow      *window)
+{
+	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+
+	if (! window->archive)
+		return NULL;
+
+	if (priv->drag_uris_bytes == NULL)
+		return NULL;
+
+	if (priv->drag_single_file != NULL)
+		return gdk_content_provider_new_typed (G_TYPE_FILE, priv->drag_single_file, NULL);
+
+	return gdk_content_provider_new_for_bytes ("text/uri-list", priv->drag_uris_bytes);
+}
+
+
 /* -- drag and drop -- */
 
 
@@ -3998,6 +4256,9 @@ selection_changed_cb (GtkTreeSelection *selection,
 	FrWindow *window = user_data;
 
 	fr_window_update_sensitivity (window);
+
+	selection_changed_extract_cb (window,
+				      fr_window_get_file_list_selection (window, TRUE, TRUE, NULL));
 
 	return;
 }
@@ -4758,6 +5019,15 @@ fr_window_construct (FrWindow *window)
 			  window);
 	gtk_widget_add_controller (GTK_WIDGET (private->list_view), GTK_EVENT_CONTROLLER (gesture_click));
 
+	{
+		GtkDragSource *drag_source = gtk_drag_source_new ();
+		g_signal_connect (drag_source,
+				  "prepare",
+				  G_CALLBACK (list_view_drag_prepare_cb),
+				  window);
+		gtk_widget_add_controller (GTK_WIDGET (private->list_view), GTK_EVENT_CONTROLLER (drag_source));
+	}
+
 	/*g_signal_connect (GTK_TREE_VIEW (private->list_view),
 			  "motion_notify_event",
 			  G_CALLBACK (file_motion_notify_callback),
@@ -4819,6 +5089,15 @@ fr_window_construct (FrWindow *window)
 			  G_CALLBACK (dir_tree_button_pressed_cb),
 			  window);
 	gtk_widget_add_controller (GTK_WIDGET (private->tree_view), GTK_EVENT_CONTROLLER (gesture_click));
+
+	{
+		GtkDragSource *drag_source = gtk_drag_source_new ();
+		g_signal_connect (drag_source,
+				  "prepare",
+				  G_CALLBACK (folder_tree_drag_prepare_cb),
+				  window);
+		gtk_widget_add_controller (GTK_WIDGET (private->tree_view), GTK_EVENT_CONTROLLER (drag_source));
+	}
 
 	selection = gtk_tree_view_get_selection (GTK_TREE_VIEW (private->tree_view));
 	g_signal_connect (selection,
@@ -5539,6 +5818,7 @@ extract_data_new (FrWindow    *window,
 	edata->ask_to_open_destination = ask_to_open_destination;
 	edata->force_directory_creation = force_directory_creation;
 
+
 	return edata;
 }
 
@@ -5646,8 +5926,19 @@ archive_extraction_ready_cb (GObject      *source_object,
 
 	fr_archive_operation_finish (FR_ARCHIVE (source_object), result, &error);
 	_archive_operation_completed (window, FR_ACTION_EXTRACTING_FILES, error);
-	if ((error == NULL) || (error->code != FR_ERROR_ASK_PASSWORD))
-		fr_window_dnd_extraction_finished (window, error != NULL);
+	if ((error == NULL) || (error->code != FR_ERROR_ASK_PASSWORD)) {
+		/* Only handle DnD completion if this extraction still matches
+		 * the current temp dir (avoid stale extractions completing
+		 * after a new one was started by selection change). */
+		if (private->dnd_extract_is_running) {
+			const char *dest_path = g_file_peek_path (edata->destination);
+			if (dest_path && private->drag_tmp_dir && strcmp (dest_path, private->drag_tmp_dir) == 0)
+				fr_window_dnd_extraction_finished (window, error != NULL);
+			else if (dest_path && private->drag_old_tmp_dir && strcmp (dest_path, private->drag_old_tmp_dir) == 0)
+				cleanup_old_tmp_dir (window);
+		} else
+			fr_window_dnd_extraction_finished (window, error != NULL);
+	}
 
 	if ((error == NULL) && ask_to_open_destination) {
 		private->destroy_with_confirmation_dialog = private->batch_mode;

@@ -1,3 +1,9 @@
+# File Roller — GTK4 DnD Fix
+
+This fork (by opencode with default free models 🫪) makes possible **Drag & Drop** for GNOME File Roller. Still kinda buggy, make an issue if you find an error or crash.
+
+---
+
 # File Roller
 
 An archive manager utility for the GNOME Environment.
