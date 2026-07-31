@@ -3726,8 +3726,12 @@ fr_window_schedule_drag_tmp_dir_cleanup (FrWindow *window)
 {
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 
+	/* The drop target reads the uri-list during the drop, but copies
+	 * the files from the temp dir only after any interaction with the
+	 * user (e.g. Nautilus' "replace existing file" dialog), so the
+	 * temp dir must outlive the drag by a generous margin. */
 	if (priv->drag_cleanup_timeout_id == 0)
-		priv->drag_cleanup_timeout_id = g_timeout_add (1000, drag_cleanup_timeout_cb, window);
+		priv->drag_cleanup_timeout_id = g_timeout_add (60000, drag_cleanup_timeout_cb, window);
 }
 
 
@@ -3740,7 +3744,7 @@ fr_window_drag_end_cb (GtkDragSource *source,
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 
 	if (priv->drag_tmp_dir) {
-		g_free (priv->drag_old_tmp_dir);
+		cleanup_old_tmp_dir (window);
 		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
 		priv->drag_tmp_dir = NULL;
 	}
@@ -3758,7 +3762,7 @@ fr_window_drag_cancel_cb (GtkDragSource       *source,
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 
 	if (priv->drag_tmp_dir) {
-		g_free (priv->drag_old_tmp_dir);
+		cleanup_old_tmp_dir (window);
 		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
 		priv->drag_tmp_dir = NULL;
 	}
@@ -3818,7 +3822,7 @@ fr_drag_content_provider_set_tmp_dir (FrDragContentProvider *self)
 
 	/* The previous drag's temp dir (if any) is no longer valid. */
 	if (priv->drag_tmp_dir) {
-		g_free (priv->drag_old_tmp_dir);
+		cleanup_old_tmp_dir (window);
 		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
 		priv->drag_tmp_dir = NULL;
 		fr_window_schedule_drag_tmp_dir_cleanup (window);
