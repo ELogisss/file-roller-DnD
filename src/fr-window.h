@@ -423,6 +423,8 @@ void            fr_window_set_notify                   (FrWindow      *window,
 void            fr_window_update_dialog_closed         (FrWindow         *window);
 void		fr_window_dnd_extraction_finished      (FrWindow	 *window,
 							gboolean	  error);
+void		fr_window_clipboard_extraction_finished (FrWindow	 *window,
+							gboolean	  error);
 
 /**
  * fr_window_extract_archive_and_continue:

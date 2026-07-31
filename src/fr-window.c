@@ -310,6 +310,12 @@ typedef struct {
 	char		 *drag_old_tmp_dir;
 	guint		  drag_cleanup_timeout_id;
 
+	/* clipboard copy data */
+
+	gboolean          clipboard_extract_is_running;
+	char             *clipboard_tmp_dir;      /* temp dir holding the copied files */
+	GdkContentProvider *clipboard_content;   /* ref to the content set on the clipboard */
+
 	/* progress dialog data */
 
 	GtkWidget        *progress_dialog;
@@ -362,6 +368,13 @@ typedef struct {
 
 
 G_DEFINE_TYPE_WITH_PRIVATE (FrWindow, fr_window, GTK_TYPE_APPLICATION_WINDOW)
+
+
+static void fr_window_clear_clipboard_copy (FrWindow *window);
+static GdkClipboard *fr_window_get_system_clipboard (void);
+static void clipboard_owner_changed_cb (GdkClipboard *clipboard,
+					GParamSpec   *pspec,
+					FrWindow     *window);
 
 
 /* -- fr_window_free_private_data -- */
@@ -540,6 +553,15 @@ fr_window_free_private_data (FrWindow *window)
 	g_clear_error (&private->drag_error);
 	_g_string_list_free (private->drag_file_list);
 	private->drag_file_list = NULL;
+
+	if (private->clipboard_content != NULL) {
+		if (gdk_clipboard_get_content (fr_window_get_system_clipboard ()) == private->clipboard_content)
+			gdk_clipboard_set_content (fr_window_get_system_clipboard (), NULL);
+	}
+	fr_window_clear_clipboard_copy (window);
+	g_signal_handlers_disconnect_by_func (fr_window_get_system_clipboard (),
+					      clipboard_owner_changed_cb,
+					      window);
 
 	g_free (private->last_location);
 	g_free (private->location_before_filter);
@@ -841,6 +863,7 @@ fr_window_init (FrWindow *window)
 	private->update_dropped_files = FALSE;
 	private->dnd_extract_is_running = FALSE;
 	private->dnd_extract_finished_with_error = FALSE;
+	private->clipboard_extract_is_running = FALSE;
 	private->filter_mode = FALSE;
 	private->use_progress_dialog = TRUE;
 	private->batch_title = NULL;
@@ -4154,6 +4177,130 @@ folder_tree_drag_begin_cb (GtkDragSource *source,
 }
 
 
+/* -- copy to clipboard -- */
+
+
+static GdkClipboard *
+fr_window_get_system_clipboard (void)
+{
+	return gdk_display_get_clipboard (gdk_display_get_default ());
+}
+
+
+static void
+fr_window_clear_clipboard_copy (FrWindow *window)
+{
+	FrWindowPrivate *private = fr_window_get_instance_private (window);
+
+	if (private->clipboard_tmp_dir != NULL) {
+		GFile *dir = g_file_new_for_path (private->clipboard_tmp_dir);
+		_g_file_remove_directory (dir, NULL, NULL);
+		g_object_unref (dir);
+		g_free (private->clipboard_tmp_dir);
+		private->clipboard_tmp_dir = NULL;
+	}
+
+	_g_object_unref (private->clipboard_content);
+	private->clipboard_content = NULL;
+}
+
+
+static void
+clipboard_owner_changed_cb (GdkClipboard *clipboard,
+			    GParamSpec   *pspec,
+			    FrWindow     *window)
+{
+	FrWindowPrivate *private = fr_window_get_instance_private (window);
+
+	if (private->clipboard_content == NULL)
+		return;
+
+	/* Nothing to do while we still own the clipboard. */
+	if (gdk_clipboard_get_content (clipboard) == private->clipboard_content)
+		return;
+
+	/* Someone else owns the clipboard now: the extracted files will
+	 * never be pasted, so remove them. */
+	fr_window_clear_clipboard_copy (window);
+}
+
+
+static GdkContentProvider *
+clipboard_files_provider_new (const char *uris_str)
+{
+	GdkContentProvider *providers[2];
+	GdkContentProvider *uri_list_provider;
+	GdkContentProvider *gnome_provider;
+	GdkContentProvider *result;
+	GString *gnome_str;
+	char **uris;
+	int i;
+
+	uri_list_provider = gdk_content_provider_new_for_bytes ("text/uri-list",
+								g_bytes_new (uris_str, strlen (uris_str)));
+
+	/* Nautilus pastes files from the "x-special/gnome-copied-files"
+	 * target, whose first line is the operation ("copy" or "cut") and
+	 * whose following lines are the URIs, one per line.  Nautilus is
+	 * strict: a CR at the end of a URI makes it invalid and trailing
+	 * empty lines are rejected, so the string must not contain "\r"
+	 * nor end with a newline. */
+	gnome_str = g_string_new ("copy");
+	uris = g_strsplit (uris_str, "\r\n", -1);
+	for (i = 0; (uris[i] != NULL) && (uris[i][0] != '\0'); i++)
+		g_string_append_printf (gnome_str, "\n%s", uris[i]);
+	g_strfreev (uris);
+
+	gnome_provider = gdk_content_provider_new_for_bytes ("x-special/gnome-copied-files",
+							     g_bytes_new (gnome_str->str, gnome_str->len));
+	g_string_free (gnome_str, TRUE);
+
+	providers[0] = uri_list_provider;
+	providers[1] = gnome_provider;
+
+	/* The union takes ownership of the sub-providers (transfer full). */
+	result = gdk_content_provider_new_union (providers, 2);
+
+	return result;
+}
+
+
+void
+fr_window_clipboard_extraction_finished (FrWindow *window,
+					 gboolean  error)
+{
+	FrWindowPrivate *private = fr_window_get_instance_private (window);
+	GdkContentProvider *provider;
+	GdkClipboard *clipboard;
+	char *uris_str;
+
+	private->clipboard_extract_is_running = FALSE;
+	private->action = FR_ACTION_NONE;
+
+	if (error || (private->clipboard_tmp_dir == NULL)) {
+		fr_window_clear_clipboard_copy (window);
+		return;
+	}
+
+	uris_str = build_uri_list_from_dir (private->clipboard_tmp_dir);
+	if ((uris_str == NULL) || (uris_str[0] == '\0')) {
+		g_free (uris_str);
+		fr_window_clear_clipboard_copy (window);
+		return;
+	}
+
+	provider = clipboard_files_provider_new (uris_str);
+	g_free (uris_str);
+
+	_g_object_unref (private->clipboard_content);
+	private->clipboard_content = _g_object_ref (provider);
+
+	clipboard = fr_window_get_system_clipboard ();
+	gdk_clipboard_set_content (clipboard, provider);
+	g_object_unref (provider);
+}
+
+
 /* -- drag and drop -- */
 
 
@@ -5408,6 +5555,13 @@ fr_window_construct (FrWindow *window)
 			  window);
 	gtk_widget_add_controller (GTK_WIDGET (private->list_view), GTK_EVENT_CONTROLLER (gesture_click));
 
+	/* Remove the clipboard copy's temp files once another
+	 * application takes over the clipboard. */
+	g_signal_connect (fr_window_get_system_clipboard (),
+			  "notify::content",
+			  G_CALLBACK (clipboard_owner_changed_cb),
+			  window);
+
 	{
 		GtkDragSource *drag_source = gtk_drag_source_new ();
 		g_signal_connect (drag_source,
@@ -6363,6 +6517,15 @@ archive_extraction_ready_cb (GObject      *source_object,
 			const char *dest_path = g_file_peek_path (edata->destination);
 			if (dest_path && strcmp (dest_path, private->drag_old_tmp_dir) == 0)
 				cleanup_old_tmp_dir (window);
+		}
+
+		/* Handle clipboard copy completion: a completion whose
+		 * destination matches the clipboard temp dir belongs to a
+		 * "copy to clipboard" extraction. */
+		if (private->clipboard_extract_is_running) {
+			const char *dest_path = g_file_peek_path (edata->destination);
+			if (dest_path && private->clipboard_tmp_dir && strcmp (dest_path, private->clipboard_tmp_dir) == 0)
+				fr_window_clipboard_extraction_finished (window, error != NULL);
 		}
 	}
 
@@ -8422,6 +8585,71 @@ fr_window_get_selection (FrWindow   *window,
 
 
 static void
+fr_window_copy_files_to_clipboard (FrWindow *window,
+				   gboolean  from_sidebar)
+{
+	FrWindowPrivate *private = fr_window_get_instance_private (window);
+	GList *file_list;
+	GFile *tmp_dir_file;
+	char  *tmp_dir_path;
+	gboolean junk_paths = FALSE;
+
+	if (window->archive == NULL)
+		return;
+
+	/* Don't start a new extraction while the archive is busy
+	 * (listing, another extraction, ...). */
+	if (private->action != FR_ACTION_NONE || private->clipboard_extract_is_running)
+		return;
+
+	/* Clear any previous clipboard copy; it is going to be replaced. */
+	if (private->clipboard_content != NULL) {
+		GdkClipboard *clipboard = fr_window_get_system_clipboard ();
+
+		if (gdk_clipboard_get_content (clipboard) == private->clipboard_content)
+			gdk_clipboard_set_content (clipboard, NULL);
+		fr_window_clear_clipboard_copy (window);
+	}
+
+	if (from_sidebar)
+		file_list = fr_window_get_folder_tree_selection (window, TRUE, NULL);
+	else
+		file_list = fr_window_get_file_list_selection (window, TRUE, TRUE, NULL);
+	if (file_list == NULL)
+		return;
+
+	/* Strip directory structure for a single file inside a subfolder. */
+	if (file_list->next == NULL) {
+		const char *path = file_list->data;
+		if (path && strchr (path, '/') != NULL && ! g_str_has_suffix (path, "/"))
+			junk_paths = TRUE;
+	}
+
+	tmp_dir_path = _g_path_get_temp_work_dir (NULL);
+	if (tmp_dir_path == NULL) {
+		_g_string_list_free (file_list);
+		return;
+	}
+	tmp_dir_file = g_file_new_for_path (tmp_dir_path);
+
+	private->clipboard_tmp_dir = tmp_dir_path;
+	private->clipboard_extract_is_running = TRUE;
+
+	fr_window_archive_extract (window,
+				   file_list,
+				   tmp_dir_file,
+				   NULL,
+				   FALSE,
+				   FR_OVERWRITE_NO,
+				   junk_paths,
+				   FALSE);
+
+	g_object_unref (tmp_dir_file);
+	_g_string_list_free (file_list);
+}
+
+
+static void
 fr_window_copy_or_cut_selection (FrWindow      *window,
 				 FrClipboardOp  op,
 				 gboolean       from_sidebar)
@@ -8439,6 +8667,9 @@ fr_window_copy_or_cut_selection (FrWindow      *window,
 	app_clipboard->files = files;
 	app_clipboard->op = op;
 	app_clipboard->base_dir = base_dir;
+
+	if (op == FR_CLIPBOARD_OP_COPY)
+		fr_window_copy_files_to_clipboard (window, from_sidebar);
 
 	fr_window_update_sensitivity (window);
 }
