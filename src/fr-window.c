@@ -4062,6 +4062,98 @@ folder_tree_drag_prepare_cb (GtkDragSource *source,
 }
 
 
+/* Build a drag icon showing the first selected item's icon with a
+ * badge displaying how many items are being dragged. */
+static GtkWidget *
+create_multiple_items_drag_icon (GIcon *icon,
+				 guint  count)
+{
+	GtkWidget *overlay;
+	GtkWidget *image;
+	GtkWidget *badge;
+	char      *text;
+
+	overlay = gtk_overlay_new ();
+	image = gtk_image_new_from_gicon (icon);
+	gtk_image_set_icon_size (GTK_IMAGE (image), GTK_ICON_SIZE_LARGE);
+	gtk_overlay_set_child (GTK_OVERLAY (overlay), image);
+
+	badge = gtk_label_new (NULL);
+	text = g_strdup_printf ("%u", count);
+	gtk_label_set_text (GTK_LABEL (badge), text);
+	g_free (text);
+	gtk_widget_set_halign (badge, GTK_ALIGN_END);
+	gtk_widget_set_valign (badge, GTK_ALIGN_END);
+	gtk_overlay_add_overlay (GTK_OVERLAY (overlay), badge);
+
+	gtk_widget_set_visible (overlay, TRUE);
+	return overlay;
+}
+
+
+static void
+set_drag_icon_for_multiple_items (GtkDragSource *source,
+				  GdkDrag       *drag,
+				  FrWindow      *window,
+				  gboolean       tree_view)
+{
+	FrWindowPrivate *private = fr_window_get_instance_private (window);
+	GtkTreeSelection *selection;
+	GtkTreeModel     *model;
+	GtkTreeIter       iter;
+	GtkWidget        *icon_widget;
+	GIcon            *icon = NULL;
+	guint             count;
+
+	selection = gtk_tree_view_get_selection (GTK_TREE_VIEW (tree_view ? private->tree_view : private->list_view));
+	if (selection == NULL)
+		return;
+
+	count = gtk_tree_selection_count_selected_rows (selection);
+
+	/* A single selection is handled by GTK's default icon via G_TYPE_FILE. */
+	if (count <= 1 || ! gtk_tree_selection_get_selected (selection, &model, &iter))
+		return;
+
+	if (tree_view) {
+		icon = g_themed_icon_new ("folder");
+	}
+	else {
+		FrFileData *fdata = NULL;
+
+		gtk_tree_model_get (model, &iter, COLUMN_FILE_DATA, &fdata, -1);
+		if (fdata != NULL) {
+			icon = fr_file_data_get_icon (fdata);
+			_g_object_unref (fdata);
+		}
+	}
+
+	if (icon == NULL)
+		return;
+
+	icon_widget = create_multiple_items_drag_icon (icon, count);
+	gtk_drag_icon_set_child (GTK_DRAG_ICON (gtk_drag_icon_get_for_drag (drag)), icon_widget);
+}
+
+
+static void
+list_view_drag_begin_cb (GtkDragSource *source,
+			 GdkDrag       *drag,
+			 FrWindow      *window)
+{
+	set_drag_icon_for_multiple_items (source, drag, window, FALSE);
+}
+
+
+static void
+folder_tree_drag_begin_cb (GtkDragSource *source,
+			   GdkDrag       *drag,
+			   FrWindow      *window)
+{
+	set_drag_icon_for_multiple_items (source, drag, window, TRUE);
+}
+
+
 /* -- drag and drop -- */
 
 
@@ -5323,6 +5415,10 @@ fr_window_construct (FrWindow *window)
 				  G_CALLBACK (list_view_drag_prepare_cb),
 				  window);
 		g_signal_connect (drag_source,
+				  "drag-begin",
+				  G_CALLBACK (list_view_drag_begin_cb),
+				  window);
+		g_signal_connect (drag_source,
 				  "drag-end",
 				  G_CALLBACK (fr_window_drag_end_cb),
 				  window);
@@ -5400,6 +5496,10 @@ fr_window_construct (FrWindow *window)
 		g_signal_connect (drag_source,
 				  "prepare",
 				  G_CALLBACK (folder_tree_drag_prepare_cb),
+				  window);
+		g_signal_connect (drag_source,
+				  "drag-begin",
+				  G_CALLBACK (folder_tree_drag_begin_cb),
 				  window);
 		g_signal_connect (drag_source,
 				  "drag-end",
