@@ -1,6 +1,6 @@
-# File Roller — GTK4 DnD Fix
+# File Roller — Drag & Drop Extraction
 
-This fork (by opencode with default free models 🫪) makes possible **Drag & Drop** for GNOME File Roller. Still kinda buggy, make an issue if you find an error or crash.
+This fork adds **Drag & Drop** extraction to GNOME File Roller: select files in an archive and drag them out to any folder. Still somewhat buggy — if you find an error or crash, please open an issue.
 
 ---
 

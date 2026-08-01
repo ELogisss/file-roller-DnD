@@ -554,14 +554,17 @@ fr_window_free_private_data (FrWindow *window)
 	_g_string_list_free (private->drag_file_list);
 	private->drag_file_list = NULL;
 
+	GdkClipboard *clipboard = fr_window_get_system_clipboard ();
+
 	if (private->clipboard_content != NULL) {
-		if (gdk_clipboard_get_content (fr_window_get_system_clipboard ()) == private->clipboard_content)
-			gdk_clipboard_set_content (fr_window_get_system_clipboard (), NULL);
+		if (gdk_clipboard_get_content (clipboard) == private->clipboard_content)
+			gdk_clipboard_set_content (clipboard, NULL);
 	}
 	fr_window_clear_clipboard_copy (window);
-	g_signal_handlers_disconnect_by_func (fr_window_get_system_clipboard (),
+	g_signal_handlers_disconnect_by_func (clipboard,
 					      clipboard_owner_changed_cb,
 					      window);
+	g_object_unref (clipboard);
 
 	g_free (private->last_location);
 	g_free (private->location_before_filter);
@@ -860,6 +863,25 @@ static void
 fr_window_init (FrWindow *window)
 {
 	FrWindowPrivate *private = fr_window_get_instance_private (window);
+	static gboolean   css_loaded = FALSE;
+
+	if (! css_loaded) {
+		GtkCssProvider *provider = gtk_css_provider_new ();
+
+		gtk_css_provider_load_from_string (provider,
+						   "label.fr-drag-badge {"
+						   "  background-color: rgba(0,0,0,0.65);"
+						   "  color: white;"
+						   "  border-radius: 999px;"
+						   "  padding: 2px 6px;"
+						   "}");
+		gtk_style_context_add_provider_for_display (gdk_display_get_default (),
+							    GTK_STYLE_PROVIDER (provider),
+							    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		css_loaded = TRUE;
+	}
+
 	private->update_dropped_files = FALSE;
 	private->dnd_extract_is_running = FALSE;
 	private->dnd_extract_finished_with_error = FALSE;
@@ -4140,6 +4162,7 @@ create_multiple_items_drag_icon (GIcon *icon,
 	gtk_overlay_set_child (GTK_OVERLAY (overlay), image);
 
 	badge = gtk_label_new (NULL);
+	gtk_widget_add_css_class (badge, "fr-drag-badge");
 	text = g_strdup_printf ("%u", count);
 	gtk_label_set_text (GTK_LABEL (badge), text);
 	g_free (text);
