@@ -3843,6 +3843,7 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 {
 	FrWindow *window = self->window;
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
+	gint64 deadline;
 
 	if (self->finished)
 		return;
@@ -3858,10 +3859,21 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 	if (! self->extraction_started) {
 		/* Wait until the archive is not busy with another operation
 		 * (listing, another extraction, ...). */
-		while (priv->action != FR_ACTION_NONE || priv->dnd_extract_is_running) {
+		deadline = g_get_monotonic_time () + 60 * G_TIME_SPAN_SECOND;
+		while ((priv->action != FR_ACTION_NONE || priv->dnd_extract_is_running) &&
+		       g_get_monotonic_time () <= deadline &&
+		       ! g_cancellable_is_cancelled (priv->cancellable)) {
 			if (priv->dnd_extract_finished_with_error && ! priv->dnd_extract_is_running)
 				break;
 			g_main_context_iteration (NULL, TRUE);
+		}
+
+		if (g_get_monotonic_time () > deadline || g_cancellable_is_cancelled (priv->cancellable)) {
+			self->error = TRUE;
+			self->finished = TRUE;
+			if (priv->dnd_extract_is_running)
+				fr_window_dnd_extraction_finished (window, TRUE);
+			return;
 		}
 
 		self->extraction_started = TRUE;
@@ -3884,8 +3896,18 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 		 * cleared (with an error) by dlg-ask-password.c. */
 	}
 
-	while (priv->dnd_extract_is_running)
+	deadline = g_get_monotonic_time () + 60 * G_TIME_SPAN_SECOND;
+	while (priv->dnd_extract_is_running &&
+	       g_get_monotonic_time () <= deadline &&
+	       ! g_cancellable_is_cancelled (priv->cancellable))
 		g_main_context_iteration (NULL, TRUE);
+
+	if (priv->dnd_extract_is_running) {
+		self->error = TRUE;
+		self->finished = TRUE;
+		fr_window_dnd_extraction_finished (window, TRUE);
+		return;
+	}
 
 	if (priv->dnd_extract_finished_with_error) {
 		self->error = TRUE;
