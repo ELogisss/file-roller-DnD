@@ -2913,11 +2913,11 @@ _archive_operation_completed (FrWindow *window,
 
 	_fr_window_stop_activity_mode (window);
 	_handle_archive_operation_error (window, window->archive, action, error, &continue_batch, &opens_dialog);
+	private->action = FR_ACTION_NONE;
 	if (opens_dialog)
 		return;
 
 	operation_canceled = g_error_matches (error, FR_ERROR, FR_ERROR_STOPPED);
-	private->action = FR_ACTION_NONE;
 
 	switch (action) {
 	case FR_ACTION_CREATING_NEW_ARCHIVE:
