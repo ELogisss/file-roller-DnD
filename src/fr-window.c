@@ -4278,8 +4278,10 @@ fr_window_clipboard_extraction_finished (FrWindow *window,
 	GdkClipboard *clipboard;
 	char *uris_str;
 
+	if (! private->clipboard_extract_is_running)
+		return;
+
 	private->clipboard_extract_is_running = FALSE;
-	private->action = FR_ACTION_NONE;
 
 	if (error || (private->clipboard_tmp_dir == NULL)) {
 		fr_window_clear_clipboard_copy (window);
@@ -10154,7 +10156,6 @@ fr_window_dnd_extraction_finished (FrWindow *window,
 	if (private->dnd_extract_is_running == TRUE) {
 		private->dnd_extract_is_running = FALSE;
 		private->dnd_extract_finished_with_error = error;
-		private->action = FR_ACTION_NONE;
 	}
 }
 
