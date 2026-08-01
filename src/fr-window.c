@@ -209,6 +209,8 @@ enum {
 
 static guint fr_window_signals[LAST_SIGNAL] = { 0 };
 
+typedef struct _FrDragContentProvider FrDragContentProvider;
+
 typedef struct {
 	GtkWidget         *layout;
 	GtkWidget         *list_view;
@@ -305,10 +307,10 @@ typedef struct {
 	GList            *drag_file_list;        /* the list of files we are
 						  * dragging*/
 	gboolean	  dnd_extract_is_running;
-	gboolean	  dnd_extract_finished_with_error;
 	char		 *drag_tmp_dir;
 	char		 *drag_old_tmp_dir;
 	guint		  drag_cleanup_timeout_id;
+	FrDragContentProvider *dnd_extract_provider;
 
 	/* clipboard copy data */
 
@@ -884,7 +886,6 @@ fr_window_init (FrWindow *window)
 
 	private->update_dropped_files = FALSE;
 	private->dnd_extract_is_running = FALSE;
-	private->dnd_extract_finished_with_error = FALSE;
 	private->clipboard_extract_is_running = FALSE;
 	private->filter_mode = FALSE;
 	private->use_progress_dialog = TRUE;
@@ -3630,7 +3631,7 @@ list_view_button_pressed_cb (GtkGestureClick *gesture,
 /* -- drag and drop temp dir extraction -- */
 
 
-typedef struct {
+typedef struct _FrDragContentProvider {
 	GObject    parent;
 
 	FrWindow  *window;            /* referenced */
@@ -3643,6 +3644,9 @@ typedef struct {
 	gboolean   finished;
 	gboolean   error;
 	char      *uris_str;
+	guint      start_source_id;   /* deferred extraction start */
+	gint64     start_deadline;
+	GList     *pending_writes;    /* writes waiting for the extraction */
 } FrDragContentProvider;
 
 typedef struct {
@@ -3682,6 +3686,20 @@ static void
 fr_drag_content_provider_finalize (GObject *object)
 {
 	FrDragContentProvider *self = FR_DRAG_CONTENT_PROVIDER (object);
+
+	if (self->start_source_id != 0) {
+		g_source_remove (self->start_source_id);
+		self->start_source_id = 0;
+	}
+
+	for (GList *scan = self->pending_writes; scan; scan = scan->next) {
+		GTask *task = scan->data;
+
+		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
+					 _("Could not extract the selected files for the drag-and-drop operation."));
+		g_object_unref (task);
+	}
+	g_list_free (self->pending_writes);
 
 	_g_string_list_free (self->file_list);
 	g_free (self->tmp_dir_path);
@@ -3732,11 +3750,10 @@ drag_cleanup_timeout_cb (gpointer user_data)
 	FrWindow *window = FR_WINDOW (user_data);
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 
-	priv->drag_cleanup_timeout_id = 0;
-
-	if (priv->dnd_extract_is_running)
+	if (priv->dnd_extract_is_running || priv->clipboard_extract_is_running)
 		return G_SOURCE_CONTINUE;
 
+	priv->drag_cleanup_timeout_id = 0;
 	cleanup_old_tmp_dir (window);
 
 	return G_SOURCE_REMOVE;
@@ -3758,20 +3775,34 @@ fr_window_schedule_drag_tmp_dir_cleanup (FrWindow *window)
 
 
 static void
-fr_window_drag_end_cb (GtkDragSource *source,
-		       GdkDrag       *drag,
-		       gboolean       delete_data,
-		       FrWindow      *window)
+rotate_drag_tmp_dir (FrWindow *window)
 {
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 
-	if (priv->drag_tmp_dir) {
-		cleanup_old_tmp_dir (window);
+	if (priv->drag_tmp_dir == NULL)
+		return;
+
+	/* While an extraction is running its temp dir must not be deleted
+	 * and must stay in one of the two slots, so the old slot is kept
+	 * occupied until the extraction finishes. */
+	if (! priv->dnd_extract_is_running || priv->drag_old_tmp_dir == NULL) {
+		if (! priv->dnd_extract_is_running)
+			cleanup_old_tmp_dir (window);
 		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
 		priv->drag_tmp_dir = NULL;
 	}
 
 	fr_window_schedule_drag_tmp_dir_cleanup (window);
+}
+
+
+static void
+fr_window_drag_end_cb (GtkDragSource *source,
+		       GdkDrag       *drag,
+		       gboolean       delete_data,
+		       FrWindow      *window)
+{
+	rotate_drag_tmp_dir (window);
 }
 
 
@@ -3781,15 +3812,7 @@ fr_window_drag_cancel_cb (GtkDragSource       *source,
 			  GdkDragCancelReason  reason,
 			  FrWindow            *window)
 {
-	FrWindowPrivate *priv = fr_window_get_instance_private (window);
-
-	if (priv->drag_tmp_dir) {
-		cleanup_old_tmp_dir (window);
-		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
-		priv->drag_tmp_dir = NULL;
-	}
-
-	fr_window_schedule_drag_tmp_dir_cleanup (window);
+	rotate_drag_tmp_dir (window);
 
 	return FALSE;
 }
@@ -3852,12 +3875,7 @@ fr_drag_content_provider_set_tmp_dir (FrDragContentProvider *self)
 	self->tmp_dir_file = g_file_new_for_path (self->tmp_dir_path);
 
 	/* The previous drag's temp dir (if any) is no longer valid. */
-	if (priv->drag_tmp_dir) {
-		cleanup_old_tmp_dir (window);
-		priv->drag_old_tmp_dir = priv->drag_tmp_dir;
-		priv->drag_tmp_dir = NULL;
-		fr_window_schedule_drag_tmp_dir_cleanup (window);
-	}
+	rotate_drag_tmp_dir (window);
 
 	priv->drag_tmp_dir = g_strdup (self->tmp_dir_path);
 
@@ -3865,18 +3883,80 @@ fr_drag_content_provider_set_tmp_dir (FrDragContentProvider *self)
 }
 
 
-/* Extract the selection into the temp dir, pumping the main context
- * while the (asynchronous) extraction runs, then cache the resulting
- * uri-list.  Called lazily, when the drop target first asks for the
- * dragged content, so starting a drag is never blocked. */
+/* The extraction runs asynchronously: the drag handlers never pump the
+ * main context and the drop target is served the cached uri-list only
+ * after the extraction completes. */
+static void fr_drag_content_provider_start_extraction (FrDragContentProvider *self);
+static gboolean fr_drag_content_provider_start_timeout_cb (gpointer user_data);
+
+
 static void
-fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
+fr_drag_content_provider_schedule_start (FrDragContentProvider *self)
+{
+	if (self->start_source_id != 0)
+		return;
+
+	self->start_source_id = g_timeout_add (200, fr_drag_content_provider_start_timeout_cb, self);
+}
+
+
+static gboolean
+fr_drag_content_provider_start_timeout_cb (gpointer user_data)
+{
+	FrDragContentProvider *self = user_data;
+
+	self->start_source_id = 0;
+
+	if (! self->finished && ! self->extraction_started)
+		fr_drag_content_provider_start_extraction (self);
+
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+fr_drag_content_provider_start_extraction (FrDragContentProvider *self)
 {
 	FrWindow *window = self->window;
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
-	gint64 deadline;
-	GError *error = NULL;
 
+	if (priv->action != FR_ACTION_NONE || priv->dnd_extract_is_running) {
+		/* Wait for the archive to become free, up to a deadline. */
+		if (self->start_deadline == 0)
+			self->start_deadline = g_get_monotonic_time () + 60 * G_TIME_SPAN_SECOND;
+		else if (g_get_monotonic_time () > self->start_deadline ||
+			 g_cancellable_is_cancelled (priv->cancellable)) {
+			self->error = TRUE;
+			self->finished = TRUE;
+			return;
+		}
+
+		fr_drag_content_provider_schedule_start (self);
+		return;
+	}
+
+	self->extraction_started = TRUE;
+	priv->dnd_extract_is_running = TRUE;
+	priv->dnd_extract_provider = _g_object_ref (self);
+
+	fr_window_archive_extract (window,
+				   self->file_list,
+				   self->tmp_dir_file,
+				   NULL,
+				   FALSE,
+				   FR_OVERWRITE_NO,
+				   self->junk_paths,
+				   FALSE);
+}
+
+
+/* Start the extraction as soon as the archive is not busy with another
+ * operation (listing, another extraction, ...).  An encrypted archive
+ * without a stored password shows a password dialog here; on cancel it
+ * is notified by dlg-ask-password.c. */
+static void
+fr_drag_content_provider_start (FrDragContentProvider *self)
+{
 	if (self->finished)
 		return;
 
@@ -3888,75 +3968,7 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 		}
 	}
 
-	if (! self->extraction_started) {
-		/* Wait until the archive is not busy with another operation
-		 * (listing, another extraction, ...). */
-		deadline = g_get_monotonic_time () + 60 * G_TIME_SPAN_SECOND;
-		while ((priv->action != FR_ACTION_NONE || priv->dnd_extract_is_running) &&
-		       g_get_monotonic_time () <= deadline &&
-		       ! g_cancellable_is_cancelled (priv->cancellable)) {
-			if (priv->dnd_extract_finished_with_error && ! priv->dnd_extract_is_running)
-				break;
-			g_main_context_iteration (NULL, TRUE);
-		}
-
-		if (g_get_monotonic_time () > deadline || g_cancellable_is_cancelled (priv->cancellable)) {
-			self->error = TRUE;
-			self->finished = TRUE;
-			if (priv->dnd_extract_is_running)
-				fr_window_dnd_extraction_finished (window, TRUE);
-			return;
-		}
-
-		self->extraction_started = TRUE;
-		priv->dnd_extract_is_running = TRUE;
-		priv->dnd_extract_finished_with_error = FALSE;
-
-		fr_window_archive_extract (window,
-					   self->file_list,
-					   self->tmp_dir_file,
-					   NULL,
-					   FALSE,
-					   FR_OVERWRITE_NO,
-					   self->junk_paths,
-					   FALSE);
-
-		/* An encrypted archive without a stored password shows a
-		 * password dialog here; both the dialog and the queued
-		 * extraction are processed while the loop below pumps the
-		 * main context.  If the dialog is cancelled, the flag is
-		 * cleared (with an error) by dlg-ask-password.c. */
-	}
-
-	deadline = g_get_monotonic_time () + 60 * G_TIME_SPAN_SECOND;
-	while (priv->dnd_extract_is_running &&
-	       g_get_monotonic_time () <= deadline &&
-	       ! g_cancellable_is_cancelled (priv->cancellable))
-		g_main_context_iteration (NULL, TRUE);
-
-	if (priv->dnd_extract_is_running) {
-		self->error = TRUE;
-		self->finished = TRUE;
-		fr_window_dnd_extraction_finished (window, TRUE);
-		return;
-	}
-
-	if (priv->dnd_extract_finished_with_error) {
-		self->error = TRUE;
-		self->finished = TRUE;
-		return;
-	}
-
-	self->uris_str = build_uri_list_from_dir (priv->drag_tmp_dir ? priv->drag_tmp_dir : self->tmp_dir_path,
-						  &error);
-	if (self->uris_str == NULL || self->uris_str[0] == '\0') {
-		g_clear_error (&error);
-		self->error = TRUE;
-		self->finished = TRUE;
-		return;
-	}
-
-	self->finished = TRUE;
+	fr_drag_content_provider_start_extraction (self);
 }
 
 
@@ -3986,13 +3998,15 @@ fr_drag_content_provider_get_value (GdkContentProvider *provider,
 {
 	FrDragContentProvider *self = FR_DRAG_CONTENT_PROVIDER (provider);
 
-	fr_drag_content_provider_ensure_extracted (self);
-
 	if (self->error) {
 		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
 				     _("Could not extract the selected files for the drag-and-drop operation."));
 		return FALSE;
 	}
+
+	/* The extraction is still running; the caller can ask again later. */
+	if (! self->finished)
+		return FALSE;
 
 	if (G_VALUE_HOLDS_STRING (value)) {
 		g_value_set_string (value, self->uris_str);
@@ -4048,9 +4062,11 @@ fr_drag_content_provider_write_mime_type_async (GdkContentProvider *provider,
 	FrDragContentProvider *self = FR_DRAG_CONTENT_PROVIDER (provider);
 	GTask *task;
 
-	fr_drag_content_provider_ensure_extracted (self);
-
-	task = g_task_new (provider, cancellable, callback, user_data);
+	/* The task must not hold a reference on the provider, or pending
+	 * writes waiting for the extraction would keep it (and themselves)
+	 * alive until finalize, which cannot run while they hold it. */
+	task = g_task_new (NULL, cancellable, callback, user_data);
+	g_task_set_priority (task, io_priority);
 
 	if (self->error) {
 		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -4059,13 +4075,21 @@ fr_drag_content_provider_write_mime_type_async (GdkContentProvider *provider,
 		return;
 	}
 
-	g_output_stream_write_all_async (stream,
-					 self->uris_str,
-					 strlen (self->uris_str),
-					 io_priority,
-					 cancellable,
-					 fr_drag_content_provider_write_mime_type_ready,
-					 task);
+	if (self->finished) {
+		g_output_stream_write_all_async (stream,
+						 self->uris_str,
+						 strlen (self->uris_str),
+						 io_priority,
+						 cancellable,
+						 fr_drag_content_provider_write_mime_type_ready,
+						 task);
+		return;
+	}
+
+	/* The extraction is still running: serve the uri-list when it
+	 * completes, or fail if the drag ends before that. */
+	g_task_set_task_data (task, g_object_ref (stream), g_object_unref);
+	self->pending_writes = g_list_append (self->pending_writes, task);
 }
 
 
@@ -4075,6 +4099,55 @@ fr_drag_content_provider_write_mime_type_finish (GdkContentProvider *provider,
 						 GError            **error)
 {
 	return g_task_propagate_boolean (G_TASK (result), error);
+}
+
+
+/* Called from fr_window_dnd_extraction_finished once the extraction
+ * completes (or fails): build the uri-list from the temp dir and serve
+ * the write requests that arrived while the extraction was running. */
+static void
+fr_drag_content_provider_extraction_finished (FrDragContentProvider *self,
+					     gboolean               error)
+{
+	GError *enum_error = NULL;
+	GList  *writes;
+
+	if (self->finished)
+		return;
+
+	if (error) {
+		self->error = TRUE;
+	}
+	else {
+		self->uris_str = build_uri_list_from_dir (self->tmp_dir_path, &enum_error);
+		if (self->uris_str == NULL || self->uris_str[0] == '\0') {
+			g_clear_error (&enum_error);
+			self->error = TRUE;
+		}
+	}
+	self->finished = TRUE;
+
+	writes = g_steal_pointer (&self->pending_writes);
+	for (GList *scan = writes; scan; scan = scan->next) {
+		GTask         *task = scan->data;
+		GOutputStream *stream = g_task_get_task_data (task);
+
+		if (self->uris_str) {
+			g_output_stream_write_all_async (stream,
+							 self->uris_str,
+							 strlen (self->uris_str),
+							 G_PRIORITY_DEFAULT,
+							 g_task_get_cancellable (task),
+							 fr_drag_content_provider_write_mime_type_ready,
+							 task);
+		}
+		else {
+			g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
+						 _("Could not extract the selected files for the drag-and-drop operation."));
+			g_object_unref (task);
+		}
+	}
+	g_list_free (writes);
 }
 
 
@@ -4112,6 +4185,8 @@ list_view_drag_prepare_cb (GtkDragSource *source,
 	provider->single_item = gtk_tree_selection_count_selected_rows (
 		gtk_tree_view_get_selection (GTK_TREE_VIEW (private->list_view))) == 1;
 
+	fr_drag_content_provider_start (provider);
+
 	return GDK_CONTENT_PROVIDER (provider);
 }
 
@@ -4140,6 +4215,8 @@ folder_tree_drag_prepare_cb (GtkDragSource *source,
 	provider->file_list = file_list;
 	provider->single_item = gtk_tree_selection_count_selected_rows (
 		gtk_tree_view_get_selection (GTK_TREE_VIEW (private->tree_view))) == 1;
+
+	fr_drag_content_provider_start (provider);
 
 	return GDK_CONTENT_PROVIDER (provider);
 }
@@ -6559,23 +6636,36 @@ archive_extraction_ready_cb (GObject      *source_object,
 	fr_archive_operation_finish (FR_ARCHIVE (source_object), result, &error);
 	_archive_operation_completed (window, FR_ACTION_EXTRACTING_FILES, error);
 	if ((error == NULL) || (error->code != FR_ERROR_ASK_PASSWORD)) {
-		/* Handle DnD completion: a completion whose destination
-		 * matches one of the DnD temp dirs belongs to a DnD
-		 * extraction.  Only one DnD extraction runs at a time
-		 * (the provider waits for any previous one to finish),
-		 * so it is always safe to clear the running flag. */
-		if (private->dnd_extract_is_running) {
+		/* Handle DnD completion: a completion whose destination is
+		 * the current DnD extraction's temp dir belongs to a DnD
+		 * extraction.  The dir is matched by the provider's own
+		 * path rather than the drag_tmp_dir/drag_old_tmp_dir
+		 * slots, because the drag may have ended (and a new drag
+		 * may have taken either slot) while the extraction was
+		 * still running.  Only one DnD extraction runs at a time
+		 * (a new one waits until the current one finishes), so it
+		 * is always safe to clear the running flag. */
+		if (private->dnd_extract_is_running && private->dnd_extract_provider) {
 			const char *dest_path = g_file_peek_path (edata->destination);
-			if (dest_path && private->drag_tmp_dir && strcmp (dest_path, private->drag_tmp_dir) == 0)
+			const char *tmp_dir = private->dnd_extract_provider->tmp_dir_path;
+
+			if (dest_path && strcmp (dest_path, tmp_dir) == 0) {
+				gboolean in_current = private->drag_tmp_dir &&
+						      strcmp (private->drag_tmp_dir, tmp_dir) == 0;
+
 				fr_window_dnd_extraction_finished (window, error != NULL);
-			else if (dest_path && private->drag_old_tmp_dir && strcmp (dest_path, private->drag_old_tmp_dir) == 0) {
-				/* The extraction's temp dir was already moved
-				 * to the old slot (its drag ended while the
-				 * extraction was running): it is still the
-				 * current DnD extraction, so clear the flag
-				 * and clean up the temp dir now. */
-				fr_window_dnd_extraction_finished (window, error != NULL);
-				cleanup_old_tmp_dir (window);
+
+				/* A dir no longer in the current slot is not
+				 * referenced by a live drag anymore; move it
+				 * into the old slot for the cleanup timeout to
+				 * delete it after the grace period (the drop
+				 * target copies the files only after the
+				 * drop). */
+				if (! in_current) {
+					g_free (private->drag_old_tmp_dir);
+					private->drag_old_tmp_dir = g_strdup (tmp_dir);
+					fr_window_schedule_drag_tmp_dir_cleanup (window);
+				}
 			}
 		}
 		else if (private->drag_old_tmp_dir) {
@@ -10214,7 +10304,14 @@ fr_window_dnd_extraction_finished (FrWindow *window,
 	FrWindowPrivate *private = fr_window_get_instance_private (window);
 	if (private->dnd_extract_is_running == TRUE) {
 		private->dnd_extract_is_running = FALSE;
-		private->dnd_extract_finished_with_error = error;
+
+		if (private->dnd_extract_provider) {
+			FrDragContentProvider *provider = private->dnd_extract_provider;
+
+			private->dnd_extract_provider = NULL;
+			fr_drag_content_provider_extraction_finished (provider, error);
+			g_object_unref (provider);
+		}
 	}
 }
 
