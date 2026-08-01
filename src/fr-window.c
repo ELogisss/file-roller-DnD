@@ -3774,7 +3774,8 @@ fr_window_drag_cancel_cb (GtkDragSource       *source,
 
 
 static char *
-build_uri_list_from_dir (const char *dir_path)
+build_uri_list_from_dir (const char *dir_path,
+			 GError      **error)
 {
 	GFile *dir;
 	GFileEnumerator *enumerator;
@@ -3792,7 +3793,7 @@ build_uri_list_from_dir (const char *dir_path)
 	}
 
 	uris = g_string_new ("");
-	while ((info = g_file_enumerator_next_file (enumerator, NULL, NULL)) != NULL) {
+	while ((info = g_file_enumerator_next_file (enumerator, NULL, error)) != NULL) {
 		GFile *child = g_file_get_child (dir, g_file_info_get_name (info));
 		char *uri = g_file_get_uri (child);
 		g_string_append (uris, uri);
@@ -3801,6 +3802,14 @@ build_uri_list_from_dir (const char *dir_path)
 		g_object_unref (child);
 		g_object_unref (info);
 	}
+
+	if (*error != NULL) {
+		g_string_free (uris, TRUE);
+		g_object_unref (enumerator);
+		g_object_unref (dir);
+		return NULL;
+	}
+
 	g_object_unref (enumerator);
 	g_object_unref (dir);
 
@@ -3844,6 +3853,7 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 	FrWindow *window = self->window;
 	FrWindowPrivate *priv = fr_window_get_instance_private (window);
 	gint64 deadline;
+	GError *error = NULL;
 
 	if (self->finished)
 		return;
@@ -3915,8 +3925,10 @@ fr_drag_content_provider_ensure_extracted (FrDragContentProvider *self)
 		return;
 	}
 
-	self->uris_str = build_uri_list_from_dir (priv->drag_tmp_dir ? priv->drag_tmp_dir : self->tmp_dir_path);
+	self->uris_str = build_uri_list_from_dir (priv->drag_tmp_dir ? priv->drag_tmp_dir : self->tmp_dir_path,
+						  &error);
 	if (self->uris_str == NULL || self->uris_str[0] == '\0') {
+		g_clear_error (&error);
 		self->error = TRUE;
 		self->finished = TRUE;
 		return;
@@ -4299,6 +4311,7 @@ fr_window_clipboard_extraction_finished (FrWindow *window,
 	GdkContentProvider *provider;
 	GdkClipboard *clipboard;
 	char *uris_str;
+	GError *enum_error = NULL;
 
 	if (! private->clipboard_extract_is_running)
 		return;
@@ -4310,8 +4323,9 @@ fr_window_clipboard_extraction_finished (FrWindow *window,
 		return;
 	}
 
-	uris_str = build_uri_list_from_dir (private->clipboard_tmp_dir);
+	uris_str = build_uri_list_from_dir (private->clipboard_tmp_dir, &enum_error);
 	if ((uris_str == NULL) || (uris_str[0] == '\0')) {
+		g_clear_error (&enum_error);
 		g_free (uris_str);
 		fr_window_clear_clipboard_copy (window);
 		return;
